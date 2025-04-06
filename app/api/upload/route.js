@@ -54,54 +54,60 @@ import path from 'path'
 import fs from 'fs'
 
 export async function POST(req) {
-  const formData = await req.formData()
-  const files = formData.getAll('files')
-  const uploadedFiles = []
+  try {
+    const formData = await req.formData()
+    const files = formData.getAll('files')
+    const uploadedFiles = []
 
-  for (const file of files) {
-    const buffer = Buffer.from(await file.arrayBuffer())
-    const ext = file.name.split('.').pop().toLowerCase()
-
-    if (buffer.length > 10 * 1024 * 1024) {
-      return NextResponse.json({ error: 'File too large (max 10MB)' }, { status: 400 })
+    if (!files || files.length === 0) {
+      return NextResponse.json({ error: 'No files uploaded' }, { status: 400 })
     }
 
-    if (!['pdf', 'mp3', 'mp4'].includes(ext)) {
-      return NextResponse.json({ error: 'Invalid file type' }, { status: 400 })
-    }
+    for (const file of files) {
+      const arrayBuffer = await file.arrayBuffer()
+      const buffer = Buffer.from(arrayBuffer)
+      const sizeInMB = (buffer.length / (1024 * 1024)).toFixed(2)
+      const ext = file.name.split('.').pop().toLowerCase()
 
-    if (process.env.NODE_ENV === 'development') {
-      // local storage (fs)
-      const uploadDir = path.join(process.cwd(), 'public/upload')
-      const filename = file.name
-      const filePath = path.join(uploadDir, filename)
+      console.log(`📁 File: ${file.name}, Size: ${sizeInMB} MB`)
 
-      // Ensure folder exists
-      if (!fs.existsSync(uploadDir)) {
-        fs.mkdirSync(uploadDir, { recursive: true })
+      if (buffer.length > 10 * 1024 * 1024) {
+        return NextResponse.json({ error: 'File too large (max 10MB)' }, { status: 400 })
       }
 
-      let finalName = filename
-      let finalPath = filePath
-      let count = 1
-      while (fs.existsSync(finalPath)) {
-        const nameWithoutExt = path.basename(filename, `.${ext}`)
-        finalName = `${nameWithoutExt}(${count}).${ext}`
-        finalPath = path.join(uploadDir, finalName)
-        count++
+      if (!['pdf', 'mp3', 'mp4'].includes(ext)) {
+        return NextResponse.json({ error: 'Invalid file type' }, { status: 400 })
       }
 
-      await writeFile(finalPath, buffer)
-      uploadedFiles.push(`/upload/${finalName}`)
+      if (process.env.NODE_ENV === 'development') {
+        const uploadDir = path.join(process.cwd(), 'public/upload')
+        if (!fs.existsSync(uploadDir)) {
+          fs.mkdirSync(uploadDir, { recursive: true })
+        }
 
-    } else {
-      // cloud storage (Vercel Blob)
-      const blob = await put(file.name, buffer, {
-        access: 'public',
-      })
-      uploadedFiles.push(blob.url)
+        let finalName = file.name
+        let filePath = path.join(uploadDir, finalName)
+        let count = 1
+        while (fs.existsSync(filePath)) {
+          const nameWithoutExt = path.basename(file.name, `.${ext}`)
+          finalName = `${nameWithoutExt}(${count}).${ext}`
+          filePath = path.join(uploadDir, finalName)
+          count++
+        }
+
+        await writeFile(filePath, buffer)
+        uploadedFiles.push(`/upload/${finalName}`)
+      } else {
+        const blob = await put(file.name, buffer, {
+          access: 'public'
+        })
+        uploadedFiles.push(blob.url)
+      }
     }
+
+    return NextResponse.json({ success: true, files: uploadedFiles })
+  } catch (err) {
+    console.error('❌ Upload error:', err)
+    return NextResponse.json({ error: 'Upload failed on server' }, { status: 500 })
   }
-
-  return NextResponse.json({ success: true, files: uploadedFiles })
 }
